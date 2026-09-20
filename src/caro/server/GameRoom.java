@@ -175,6 +175,19 @@ public class GameRoom {
     /**
      * Gọi khi 1 trong 2 client ngắt kết nối giữa ván.
      */
+    /**
+     * Chuyển tiếp tin nhắn chat từ 1 người chơi tới cả 2 người
+     * (kể cả người gửi, để đơn giản hóa - client nhận lại đúng tin của mình
+     * kèm tên, không cần tự hiển thị cục bộ trước).
+     */
+    public synchronized void broadcastChat(ClientHandler sender, String text) {
+        if (text == null || text.trim().isEmpty()) return;
+        Message chat = new Message(Message.Type.CHAT);
+        chat.note = sender.getPlayerName() + ": " + text.trim();
+        if (player1 != null) player1.sendMessage(chat);
+        if (player2 != null) player2.sendMessage(chat);
+    }
+
     public synchronized void notifyOpponentLeft(ClientHandler leaver) {
         if (gameOver) return;
         gameOver = true;

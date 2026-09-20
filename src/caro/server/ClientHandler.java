@@ -64,6 +64,11 @@ public class ClientHandler implements Runnable {
                         room.requestReplay(playerId);
                         break;
 
+                    case CHAT:
+                        System.out.println("[Server] Chat từ Player " + playerId + ": " + msg.note);
+                        if (room != null) room.broadcastChat(this, msg.note);
+                        break;
+
                     default:
                         break;
                 }

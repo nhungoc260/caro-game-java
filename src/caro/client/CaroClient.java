@@ -44,6 +44,9 @@ public class CaroClient extends JFrame {
     private JLabel statusLabel;
     private JLabel scoreLabel;
     private RoundedButton replayButton;
+    private JTextArea chatArea;
+    private JTextField chatInput;
+    private RoundedButton sendChatButton;
 
     private ObjectOutputStream out;
     private ObjectInputStream in;
@@ -66,11 +69,17 @@ public class CaroClient extends JFrame {
         getContentPane().setBackground(Color.WHITE);
 
         add(buildHeaderPanel(), BorderLayout.NORTH);
-        add(buildBoardPanel(), BorderLayout.CENTER);
+
+        JPanel centerPanel = new JPanel(new BorderLayout());
+        centerPanel.setBackground(Color.WHITE);
+        centerPanel.add(buildBoardPanel(), BorderLayout.CENTER);
+        centerPanel.add(buildChatPanel(), BorderLayout.EAST);
+        add(centerPanel, BorderLayout.CENTER);
+
         add(buildBottomPanel(), BorderLayout.SOUTH);
 
-        setSize(780, 900);
-        setMinimumSize(new Dimension(600, 700));
+        setSize(1020, 900);
+        setMinimumSize(new Dimension(760, 700));
         setLocationRelativeTo(null);
         setEnabledBoard(false);
     }
@@ -144,6 +153,66 @@ public class CaroClient extends JFrame {
         }
         wrapper.add(boardPanel, BorderLayout.CENTER);
         return wrapper;
+    }
+
+    private JPanel buildChatPanel() {
+        JPanel wrapper = new JPanel(new BorderLayout(0, 8));
+        wrapper.setBackground(Color.WHITE);
+        wrapper.setBorder(new EmptyBorder(14, 0, 14, 14));
+        wrapper.setPreferredSize(new Dimension(240, 0));
+
+        JLabel chatTitle = new JLabel("TRÒ CHUYỆN", SwingConstants.CENTER);
+        chatTitle.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        chatTitle.setForeground(new Color(93, 64, 55));
+        chatTitle.setBorder(new EmptyBorder(0, 0, 6, 0));
+
+        chatArea = new JTextArea();
+        chatArea.setEditable(false);
+        chatArea.setLineWrap(true);
+        chatArea.setWrapStyleWord(true);
+        chatArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        chatArea.setBackground(new Color(250, 244, 234));
+        chatArea.setForeground(new Color(62, 39, 35));
+        chatArea.setBorder(new EmptyBorder(8, 8, 8, 8));
+
+        JScrollPane scrollPane = new JScrollPane(chatArea);
+        scrollPane.setBorder(BorderFactory.createLineBorder(COLOR_GRID_LINE, 1));
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+
+        JPanel inputPanel = new JPanel(new BorderLayout(6, 0));
+        inputPanel.setBackground(Color.WHITE);
+
+        chatInput = new JTextField();
+        chatInput.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        chatInput.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(COLOR_GRID_LINE, 1),
+                new EmptyBorder(6, 8, 6, 8)));
+        chatInput.addActionListener(e -> onSendChat()); // gửi khi bấm Enter
+
+        sendChatButton = new RoundedButton("Gửi");
+        sendChatButton.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        sendChatButton.setBackground(new Color(93, 64, 55));
+        sendChatButton.setForeground(Color.WHITE);
+        sendChatButton.setBorder(new EmptyBorder(6, 14, 6, 14));
+        sendChatButton.addActionListener(e -> onSendChat());
+
+        inputPanel.add(chatInput, BorderLayout.CENTER);
+        inputPanel.add(sendChatButton, BorderLayout.EAST);
+
+        wrapper.add(chatTitle, BorderLayout.NORTH);
+        wrapper.add(scrollPane, BorderLayout.CENTER);
+        wrapper.add(inputPanel, BorderLayout.SOUTH);
+        return wrapper;
+    }
+
+    private void onSendChat() {
+        String text = chatInput.getText();
+        if (text == null || text.trim().isEmpty()) return;
+        Message chat = new Message(Message.Type.CHAT);
+        chat.playerId = myId;
+        chat.note = text.trim();
+        sendMessage(chat);
+        chatInput.setText("");
     }
 
     private JPanel buildBottomPanel() {
@@ -266,6 +335,13 @@ public class CaroClient extends JFrame {
 
             case REPLAY:
                 setStatus(msg.note != null ? msg.note : "Đối thủ muốn chơi lại...", COLOR_PILL_WAIT);
+                break;
+
+            case CHAT:
+                if (msg.note != null) {
+                    chatArea.append(msg.note + "\n");
+                    chatArea.setCaretPosition(chatArea.getDocument().getLength());
+                }
                 break;
 
             case MOVE: {

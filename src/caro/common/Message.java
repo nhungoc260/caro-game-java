@@ -25,6 +25,8 @@ public class Message implements Serializable {
         OPPONENT_LEFT,  // Server -> Client: đối thủ đã ngắt kết nối
         REPLAY,         // Client -> Server: xin chơi lại
                         // Server -> Client: báo đối thủ đang chờ chơi lại
+        CHAT,           // Client -> Server: gửi tin nhắn chat
+                        // Server -> Client: chuyển tiếp tin nhắn (kèm tên người gửi)
         ERROR
     }
 
