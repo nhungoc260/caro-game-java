@@ -43,6 +43,10 @@ public class CaroClient extends JFrame {
     private RoundedPanel statusPill;
     private JLabel statusLabel;
     private JLabel scoreLabel;
+    private JLabel timeLabel;
+    private Timer countdownTimer;
+    private int secondsLeft;
+    private static final int TURN_TIME_SECONDS = 20; // phải khớp với TURN_TIME_MS bên server
     private RoundedButton replayButton;
     private JTextArea chatArea;
     private JTextField chatInput;
@@ -126,9 +130,16 @@ public class CaroClient extends JFrame {
         scoreLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         scoreLabel.setBorder(new EmptyBorder(10, 0, 0, 0));
 
+        timeLabel = new JLabel("", SwingConstants.CENTER);
+        timeLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        timeLabel.setForeground(new Color(212, 165, 116));
+        timeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        timeLabel.setBorder(new EmptyBorder(4, 0, 0, 0));
+
         header.add(titleLabel);
         header.add(statusPill);
         header.add(scoreLabel);
+        header.add(timeLabel);
         return header;
     }
 
@@ -240,6 +251,38 @@ public class CaroClient extends JFrame {
         return "THẮNG " + wins + "   -   THUA " + losses + "   -   HÒA " + draws;
     }
 
+    /**
+     * Khởi động lại đồng hồ đếm ngược hiển thị cho lượt hiện tại.
+     * Đây chỉ là hiển thị trực quan phía client; server mới là nơi thực sự
+     * tính giờ và tự động đánh thay khi hết giờ, nên dù đồng hồ 2 bên có
+     * lệch vài phần giây cũng không ảnh hưởng tính đúng đắn của ván chơi.
+     */
+    private void resetTurnTimer() {
+        stopTurnTimer();
+        secondsLeft = TURN_TIME_SECONDS;
+        updateTimeLabel();
+        countdownTimer = new Timer(1000, e -> {
+            secondsLeft--;
+            updateTimeLabel();
+            if (secondsLeft <= 0) {
+                stopTurnTimer();
+            }
+        });
+        countdownTimer.start();
+    }
+
+    private void stopTurnTimer() {
+        if (countdownTimer != null) {
+            countdownTimer.stop();
+            countdownTimer = null;
+        }
+    }
+
+    private void updateTimeLabel() {
+        timeLabel.setText("Thời gian còn lại: " + Math.max(secondsLeft, 0) + "s");
+        timeLabel.setForeground(secondsLeft <= 5 ? COLOR_PILL_LOSE : new Color(212, 165, 116));
+    }
+
     private void setStatus(String text, Color bgColor) {
         statusLabel.setText(text);
         statusPill.setBg(bgColor);
@@ -331,6 +374,7 @@ public class CaroClient extends JFrame {
                 replayButton.setEnabled(true);
                 updateTitleWithNames();
                 updateStatus();
+                resetTurnTimer();
                 break;
 
             case REPLAY:
@@ -359,12 +403,14 @@ public class CaroClient extends JFrame {
 
                 currentTurn = msg.nextTurn;
                 updateStatus();
+                resetTurnTimer();
                 break;
             }
 
             case WIN:
                 gameStarted = false;
                 setEnabledBoard(false);
+                stopTurnTimer();
                 highlightWinLine(msg.winLineX, msg.winLineY);
                 if (msg.winnerId == myId) {
                     wins++;
@@ -381,6 +427,7 @@ public class CaroClient extends JFrame {
             case DRAW:
                 gameStarted = false;
                 setEnabledBoard(false);
+                stopTurnTimer();
                 draws++;
                 setStatus("HÒA!", COLOR_PILL_DRAW);
                 scoreLabel.setText(buildScoreText());
@@ -391,6 +438,7 @@ public class CaroClient extends JFrame {
             case OPPONENT_LEFT:
                 gameStarted = false;
                 setEnabledBoard(false);
+                stopTurnTimer();
                 replayButton.setVisible(false);
                 setStatus("Đối thủ đã thoát khỏi ván chơi!", COLOR_PILL_LOSE);
                 break;

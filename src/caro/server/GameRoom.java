@@ -4,15 +4,22 @@ import caro.common.Message;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
+import java.util.Timer;
+import java.util.TimerTask;
 
 /**
  * GameRoom đại diện cho 1 ván cờ giữa 2 người chơi.
- * Server là "trọng tài": giữ bàn cờ, kiểm tra lượt đi và xác định thắng/thua/hòa.
+ * Server là "trọng tài": giữ bàn cờ, kiểm tra lượt đi, giới hạn thời gian
+ * mỗi lượt, và xác định thắng/thua/hòa.
  * Client KHÔNG tự xử lý thắng thua để tránh lệch trạng thái giữa 2 bên.
  */
 public class GameRoom {
 
     public static final int SIZE = 15; // bàn cờ 15x15
+
+    // Mỗi lượt đánh có tối đa 20 giây; hết giờ server tự đánh thay 1 ô ngẫu nhiên.
+    private static final long TURN_TIME_MS = 20_000;
 
     private final int[][] board = new int[SIZE][SIZE]; // 0 = trống, 1 = player1, 2 = player2
     private ClientHandler player1;
@@ -26,10 +33,15 @@ public class GameRoom {
     // Danh sách toạ độ 5 (hoặc nhiều hơn) ô tạo thành đường thắng, để tô sáng bên client
     private List<int[]> lastWinCells;
 
+    private final Random random = new Random();
+    private final Timer turnTimer = new Timer(true); // daemon thread, tự tắt khi server đóng
+    private TimerTask currentTurnTask;
+
     public void setPlayer1(ClientHandler p) { this.player1 = p; }
     public void setPlayer2(ClientHandler p) { this.player2 = p; }
 
     public synchronized void startGame() {
+        cancelTurnTimer();
         gameOver = false;
         currentTurn = 1;
         replayRequested1 = false;
@@ -47,6 +59,8 @@ public class GameRoom {
         Message m2 = new Message(Message.Type.START);
         m2.playerId = 2;
         player2.sendMessage(m2);
+
+        scheduleTurnTimer();
     }
 
     /**
@@ -62,14 +76,42 @@ public class GameRoom {
     }
 
     /**
-     * Xử lý 1 nước đi do ClientHandler chuyển lên.
+     * Xử lý 1 nước đi do ClientHandler chuyển lên (người chơi tự bấm).
      */
     public synchronized void handleMove(int playerId, int x, int y) {
         if (gameOver) return;
         if (playerId != currentTurn) return;              // không đúng lượt -> bỏ qua
         if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
         if (board[x][y] != 0) return;                      // ô đã có quân
+        applyMove(playerId, x, y);
+    }
 
+    /**
+     * Gọi khi hết giờ 1 lượt mà người chơi chưa đánh - server tự chọn
+     * 1 ô trống ngẫu nhiên để đánh thay, giữ ván cờ không bị treo mãi.
+     */
+    private synchronized void autoMove() {
+        if (gameOver) return;
+
+        List<int[]> emptyCells = new ArrayList<int[]>();
+        for (int i = 0; i < SIZE; i++) {
+            for (int j = 0; j < SIZE; j++) {
+                if (board[i][j] == 0) emptyCells.add(new int[]{i, j});
+            }
+        }
+        if (emptyCells.isEmpty()) return; // hết ô trống thì lẽ ra đã hòa từ trước
+
+        int[] chosen = emptyCells.get(random.nextInt(emptyCells.size()));
+        System.out.println("[Server] Hết giờ! Tự động đánh thay Player " + currentTurn
+                + " tại (" + chosen[0] + "," + chosen[1] + ")");
+        applyMove(currentTurn, chosen[0], chosen[1]);
+    }
+
+    /**
+     * Logic đặt quân dùng chung cho cả nước đi thật (handleMove) và
+     * nước đi tự động khi hết giờ (autoMove).
+     */
+    private void applyMove(int playerId, int x, int y) {
         board[x][y] = playerId;
         currentTurn = (playerId == 1) ? 2 : 1;
 
@@ -82,6 +124,7 @@ public class GameRoom {
 
         if (checkWin(x, y, playerId)) {
             gameOver = true;
+            cancelTurnTimer();
             Message win = new Message(Message.Type.WIN);
             win.winnerId = playerId;
             if (lastWinCells != null) {
@@ -99,7 +142,30 @@ public class GameRoom {
 
         if (isBoardFull()) {
             gameOver = true;
+            cancelTurnTimer();
             broadcast(new Message(Message.Type.DRAW));
+            return;
+        }
+
+        // Ván vẫn tiếp tục -> bắt đầu đếm giờ cho lượt kế tiếp
+        scheduleTurnTimer();
+    }
+
+    private void scheduleTurnTimer() {
+        cancelTurnTimer();
+        currentTurnTask = new TimerTask() {
+            @Override
+            public void run() {
+                autoMove();
+            }
+        };
+        turnTimer.schedule(currentTurnTask, TURN_TIME_MS);
+    }
+
+    private void cancelTurnTimer() {
+        if (currentTurnTask != null) {
+            currentTurnTask.cancel();
+            currentTurnTask = null;
         }
     }
 
@@ -173,9 +239,6 @@ public class GameRoom {
     }
 
     /**
-     * Gọi khi 1 trong 2 client ngắt kết nối giữa ván.
-     */
-    /**
      * Chuyển tiếp tin nhắn chat từ 1 người chơi tới cả 2 người
      * (kể cả người gửi, để đơn giản hóa - client nhận lại đúng tin của mình
      * kèm tên, không cần tự hiển thị cục bộ trước).
@@ -188,9 +251,13 @@ public class GameRoom {
         if (player2 != null) player2.sendMessage(chat);
     }
 
+    /**
+     * Gọi khi 1 trong 2 client ngắt kết nối giữa ván.
+     */
     public synchronized void notifyOpponentLeft(ClientHandler leaver) {
         if (gameOver) return;
         gameOver = true;
+        cancelTurnTimer();
         ClientHandler other = (leaver == player1) ? player2 : player1;
         if (other != null) {
             other.sendMessage(new Message(Message.Type.OPPONENT_LEFT));
