@@ -1,4 +1,4 @@
-# Cờ Caro Game (Client - Server)
+# Cờ Caro Online (Client - Server)
 
 Game Caro (Gomoku) 2 người chơi trực tuyến, đồng bộ nước đi qua server
 trung gian — server đóng vai trò trọng tài, xác định thắng/thua/hòa theo
