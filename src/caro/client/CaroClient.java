@@ -2,6 +2,9 @@ package caro.client;
 
 import caro.common.Message;
 
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.SourceDataLine;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
@@ -9,6 +12,9 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 
 /**
  * Main class của Client - giao diện Swing.
@@ -43,7 +49,7 @@ public class CaroClient extends JFrame {
     private RoundedPanel statusPill;
     private JLabel statusLabel;
     private JLabel scoreLabel;
-    private JLabel timeLabel;
+    private TimeBar timeBar;
     private Timer countdownTimer;
     private int secondsLeft;
     private static final int TURN_TIME_SECONDS = 20; // phải khớp với TURN_TIME_MS bên server
@@ -130,16 +136,14 @@ public class CaroClient extends JFrame {
         scoreLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         scoreLabel.setBorder(new EmptyBorder(10, 0, 0, 0));
 
-        timeLabel = new JLabel("", SwingConstants.CENTER);
-        timeLabel.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        timeLabel.setForeground(new Color(212, 165, 116));
-        timeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        timeLabel.setBorder(new EmptyBorder(4, 0, 0, 0));
+        timeBar = new TimeBar();
+        timeBar.setAlignmentX(Component.CENTER_ALIGNMENT);
+        timeBar.setBorder(new EmptyBorder(8, 0, 0, 0));
 
         header.add(titleLabel);
         header.add(statusPill);
         header.add(scoreLabel);
-        header.add(timeLabel);
+        header.add(timeBar);
         return header;
     }
 
@@ -216,6 +220,62 @@ public class CaroClient extends JFrame {
         return wrapper;
     }
 
+    /**
+     * Phát 1 nốt âm ngắn, tự tổng hợp bằng sóng sine - không cần file
+     * âm thanh đính kèm nên không lo thiếu file khi copy project sang máy khác.
+     * Chạy trên thread riêng để không làm giật giao diện.
+     */
+    private void playTone(final double freqHz, final int durationMs, final double volume) {
+        new Thread(() -> {
+            try {
+                float sampleRate = 44100f;
+                int numSamples = (int) (sampleRate * durationMs / 1000.0);
+                byte[] buffer = new byte[numSamples];
+                for (int i = 0; i < numSamples; i++) {
+                    double angle = 2.0 * Math.PI * i * freqHz / sampleRate;
+                    // fade out nhẹ ở cuối để tránh tiếng "tách" khó chịu
+                    double fade = 1.0 - ((double) i / numSamples) * 0.3;
+                    buffer[i] = (byte) (Math.sin(angle) * 100 * volume * fade);
+                }
+                AudioFormat format = new AudioFormat(sampleRate, 8, 1, true, false);
+                SourceDataLine line = AudioSystem.getSourceDataLine(format);
+                line.open(format);
+                line.start();
+                line.write(buffer, 0, buffer.length);
+                line.drain();
+                line.close();
+            } catch (Exception ignored) {
+                // Máy nào không hỗ trợ audio thì bỏ qua, không ảnh hưởng gameplay
+            }
+        }).start();
+    }
+
+    private void playMoveSound() {
+        playTone(700, 60, 0.5);
+    }
+
+    private void playWinSound() {
+        new Thread(() -> {
+            playTone(523, 120, 0.6); // Do
+            sleepQuiet(110);
+            playTone(659, 120, 0.6); // Mi
+            sleepQuiet(110);
+            playTone(784, 220, 0.6); // Sol
+        }).start();
+    }
+
+    private void playLoseSound() {
+        new Thread(() -> {
+            playTone(400, 150, 0.5);
+            sleepQuiet(140);
+            playTone(300, 250, 0.5);
+        }).start();
+    }
+
+    private void sleepQuiet(int ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException ignored) { }
+    }
+
     private void onSendChat() {
         String text = chatInput.getText();
         if (text == null || text.trim().isEmpty()) return;
@@ -260,10 +320,10 @@ public class CaroClient extends JFrame {
     private void resetTurnTimer() {
         stopTurnTimer();
         secondsLeft = TURN_TIME_SECONDS;
-        updateTimeLabel();
+        updateTimeBar();
         countdownTimer = new Timer(1000, e -> {
             secondsLeft--;
-            updateTimeLabel();
+            updateTimeBar();
             if (secondsLeft <= 0) {
                 stopTurnTimer();
             }
@@ -278,9 +338,9 @@ public class CaroClient extends JFrame {
         }
     }
 
-    private void updateTimeLabel() {
-        timeLabel.setText("Thời gian còn lại: " + Math.max(secondsLeft, 0) + "s");
-        timeLabel.setForeground(secondsLeft <= 5 ? COLOR_PILL_LOSE : new Color(212, 165, 116));
+    private void updateTimeBar() {
+        double fraction = Math.max(0, secondsLeft) / (double) TURN_TIME_SECONDS;
+        timeBar.setFraction(fraction);
     }
 
     private void setStatus(String text, Color bgColor) {
@@ -404,6 +464,7 @@ public class CaroClient extends JFrame {
                 currentTurn = msg.nextTurn;
                 updateStatus();
                 resetTurnTimer();
+                playMoveSound();
                 break;
             }
 
@@ -415,9 +476,12 @@ public class CaroClient extends JFrame {
                 if (msg.winnerId == myId) {
                     wins++;
                     setStatus("BẠN THẮNG!", COLOR_PILL_WIN);
+                    playWinSound();
+                    celebrateWin();
                 } else {
                     losses++;
                     setStatus("BẠN THUA!", COLOR_PILL_LOSE);
+                    playLoseSound();
                 }
                 scoreLabel.setText(buildScoreText());
                 replayButton.setEnabled(true);
@@ -548,6 +612,126 @@ public class CaroClient extends JFrame {
                 g2.setStroke(new BasicStroke(2.4f));
                 g2.setColor(COLOR_O);
                 g2.drawOval(pad, pad, w - 2 * pad, h - 2 * pad);
+            }
+
+            g2.dispose();
+        }
+    }
+
+    // ---------- Hiệu ứng pháo giấy (confetti) khi thắng ----------
+
+    private class ConfettiOverlay extends JComponent {
+        private final List<Particle> particles = new ArrayList<>();
+        private final Random rnd = new Random();
+        private Timer animTimer;
+        private int elapsedMs = 0;
+        private static final int DURATION_MS = 2500;
+
+        private class Particle {
+            double x, y, vx, vy, angle, spin;
+            Color color;
+            int size;
+        }
+
+        ConfettiOverlay() {
+            setOpaque(false);
+            Color[] palette = {
+                    new Color(255, 99, 71), new Color(255, 215, 0),
+                    new Color(34, 197, 94), new Color(59, 130, 246),
+                    new Color(236, 72, 153), new Color(212, 165, 116)
+            };
+            int w = Math.max(getWidth(), 800);
+            for (int i = 0; i < 120; i++) {
+                Particle p = new Particle();
+                p.x = rnd.nextDouble() * w;
+                p.y = -20 - rnd.nextDouble() * 300;
+                p.vx = -1.5 + rnd.nextDouble() * 3;
+                p.vy = 2 + rnd.nextDouble() * 3;
+                p.angle = rnd.nextDouble() * 360;
+                p.spin = -8 + rnd.nextDouble() * 16;
+                p.color = palette[rnd.nextInt(palette.length)];
+                p.size = 6 + rnd.nextInt(8);
+                particles.add(p);
+            }
+        }
+
+        void start() {
+            animTimer = new Timer(30, e -> {
+                elapsedMs += 30;
+                for (Particle p : particles) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.angle += p.spin;
+                }
+                repaint();
+                if (elapsedMs >= DURATION_MS) {
+                    stop();
+                }
+            });
+            animTimer.start();
+        }
+
+        void stop() {
+            if (animTimer != null) animTimer.stop();
+            setVisible(false);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            for (Particle p : particles) {
+                Graphics2D pg = (Graphics2D) g2.create();
+                pg.translate(p.x, p.y);
+                pg.rotate(Math.toRadians(p.angle));
+                pg.setColor(p.color);
+                pg.fillRect(-p.size / 2, -p.size / 2, p.size, p.size / 2);
+                pg.dispose();
+            }
+            g2.dispose();
+        }
+    }
+
+    private void celebrateWin() {
+        ConfettiOverlay overlay = new ConfettiOverlay();
+        setGlassPane(overlay);
+        overlay.setVisible(true);
+        overlay.start();
+    }
+
+    // ---------- Thanh đếm giờ trực quan (không hiện số, chỉ đổi độ dài + màu) ----------
+
+    private static class TimeBar extends JPanel {
+        private double fraction = 1.0; // 1.0 = đầy (còn nguyên thời gian), 0.0 = hết giờ
+
+        TimeBar() {
+            setOpaque(false);
+            setPreferredSize(new Dimension(260, 10));
+        }
+
+        void setFraction(double f) {
+            this.fraction = Math.max(0, Math.min(1, f));
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            int w = getWidth(), h = getHeight();
+
+            // Nền thanh (track) mờ
+            g2.setColor(new Color(255, 255, 255, 50));
+            g2.fillRoundRect(0, 0, w, h, h, h);
+
+            // Phần đầy, màu chuyển dần xanh lá -> vàng -> cam -> đỏ khi cạn giờ
+            int fillWidth = (int) (w * fraction);
+            if (fillWidth > 0) {
+                float hue = (float) (0.33 * fraction); // 0.33 (xanh lá) -> 0 (đỏ)
+                Color fillColor = Color.getHSBColor(hue, 0.75f, 0.9f);
+                g2.setColor(fillColor);
+                g2.fillRoundRect(0, 0, Math.max(fillWidth, h), h, h, h);
             }
 
             g2.dispose();
